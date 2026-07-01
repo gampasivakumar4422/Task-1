@@ -7,7 +7,7 @@ pipeline {
     }
 
     tools {
-        maven 'maven-3.9.2'
+        maven 'Maven3'
     }
 
     environment {
