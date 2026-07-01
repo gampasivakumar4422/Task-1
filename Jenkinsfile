@@ -1,47 +1,99 @@
-pipeline{
-    agent any
+pipeline {
+
+    agent {
+        kubernetes {
+            label 'k8s-agent'
+        }
+    }
+
     tools {
         maven 'maven-3.9.2'
     }
-    stages{
-        stage('Code_Pull'){
-            steps{
-                git branch: 'main', url: 'https://github.com/gampasivakumar4422/Task-1'
+
+    environment {
+        SERVER_IP = '54.164.137.217'
+        SSH_USER  = 'ec2-user'
+    }
+
+    stages {
+
+        stage('Checkout Code') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/gampasivakumar4422/Task-1'
             }
         }
-        stage('Code_Build'){
-            steps{
-                sh 'mvn clean package'
+
+        stage('Build WAR') {
+            steps {
+                container('maven') {
+                    sh 'mvn clean package'
+                }
             }
         }
-        stage('Code_Quality_Analysis'){
-            steps{
-                sh 'mvn sonar:sonar'
+
+        stage('Verify WAR') {
+            steps {
+                container('maven') {
+                    sh 'ls -lh target'
+                }
             }
         }
-        stage('Image_Build'){
-            steps{
-                sh 'docker build -t sivakumar4422/tomcat:$BUILD_ID .'
-            }
-        }
-        stage('Image_Push'){
-            steps{
-            withDockerRegistry(credentialsId: 'dockerhub', url: 'https://index.docker.io/v1/') {
-           sh 'docker push sivakumar4422/tomcat:$BUILD_ID'
-             }
-          }
-        }
-        stage('Deploy'){
-            steps{
-                sshagent(['staging_server']) {
+
+        stage('Deploy to Tomcat') {
+            steps {
+                sshagent(credentials: ['tng-server-key']) {
+
                     sh '''
-                    ssh -o StrictHostKeyChecking=no ubuntu@13.127.36.54 << EOF
-                    sudo docker pull sivakumar4422/tomcat:$BUILD_ID
-                    sudo docker run -d --name webapp$BUILD_ID -p ${i}:8080 sivakumar4422/tomcat:$BUILD_ID
+                    echo "========== Copy WAR =========="
+
+                    scp -o StrictHostKeyChecking=no target/*.war ${SSH_USER}@${SERVER_IP}:/tmp/
+
+                    echo "========== Deploy =========="
+
+                    ssh -o StrictHostKeyChecking=no ${SSH_USER}@${SERVER_IP} << EOF
+
+                    sudo rm -rf /opt/tomcat/webapps/SivaKumar*
+                    sudo rm -f /opt/tomcat/webapps/*.war
+
+                    sudo cp /tmp/*.war /opt/tomcat/webapps/
+
+                    echo "Deployment Successful"
+
+                    EOF
                     '''
-             }
+                }
             }
         }
-        
+
+        stage('Verify Deployment') {
+            steps {
+                sshagent(credentials: ['tng-server-key']) {
+
+                    sh '''
+                    ssh -o StrictHostKeyChecking=no ${SSH_USER}@${SERVER_IP} "ls -l /opt/tomcat/webapps"
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+
+        success {
+            echo "=================================="
+            echo "Application Deployed Successfully"
+            echo "=================================="
+        }
+
+        failure {
+            echo "=================================="
+            echo "Deployment Failed"
+            echo "=================================="
+        }
+
+        always {
+            cleanWs()
+        }
     }
 }
